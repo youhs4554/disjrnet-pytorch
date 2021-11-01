@@ -251,13 +251,21 @@ def Baseline(num_classes, base_model="r2plus1d_18", dropout=0.0):
     if base_model == "r2plus1d_18" or base_model == "r3d_18":
         model = getattr(
             torchvision.models.video, base_model)(pretrained=True)
-        num_features = getattr(model.fc, "in_features")
-        num_outputs = num_classes if num_classes > 2 else 1
-        if dropout > 0.0:
-            model.fc = nn.Sequential(nn.Dropout(
-                dropout), nn.Linear(num_features, num_outputs))
-        else:
-            model.fc = nn.Linear(num_features, num_outputs)
+    elif base_model == "r2plus1d_34":
+        model = torch.hub.load(
+                "moabitcoin/ig65m-pytorch",
+                "r2plus1d_34_8_ig65m",
+                num_classes=487,
+                pretrained=True,
+        )
+
+    num_features = getattr(model.fc, "in_features")
+    num_outputs = num_classes if num_classes > 2 else 1
+    if dropout > 0.0:
+        model.fc = nn.Sequential(nn.Dropout(
+            dropout), nn.Linear(num_features, num_outputs))
+    else:
+        model.fc = nn.Linear(num_features, num_outputs)
 
     return model
 
