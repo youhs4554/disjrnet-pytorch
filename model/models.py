@@ -157,7 +157,7 @@ class FnBNet(nn.Module):
         else:
             self.fc = nn.Linear(self.layers[4], num_outputs)
 
-        self.spread_div = collections.OrderedDict()
+        self.out_dict = collections.OrderedDict()
         self.fhooks = []
 
         for l in self._modules.keys():
@@ -190,9 +190,13 @@ class FnBNet(nn.Module):
             kldiv = torch.distributions.kl_divergence(
                 fg_dist, bg_dist).mean().clamp(0, 1)
 
-            inverse_kldiv = 1.0 - kldiv
-            # sd_of_bg = x_bg.flatten(1).std(1).mean()
-            self.spread_div[layer_name] = inverse_kldiv
+            L_discrepancy = 1.0 - kldiv
+
+            postfix = "_fnb"
+            self.out_dict["L_discrepancy_{}".format(layer_name[:-len(postfix)])] = L_discrepancy
+
+            self.out_dict["fg_activation_{}".format(layer_name[:-len(postfix)])] = x_fg
+            self.out_dict["bg_activation_{}".format(layer_name[:-len(postfix)])] = x_bg
 
         def temporal_voltility_hook(module, input, output):
             x = input[0]
@@ -205,7 +209,7 @@ class FnBNet(nn.Module):
                 x_bg_time_major[:, 1:]-x_bg_time_major[:, :-1]).sum(dim=(1, 2, 3, 4)).mean()
             # bg_voltility = x_bg_time_major.std(1).sum(dim=(1, 2, 3)).mean()
             # minimize bg's voltility
-            self.spread_div[layer_name] = bg_voltility
+            self.out_dict[layer_name] = bg_voltility
 
         return discrepancy_hook
 
@@ -240,7 +244,7 @@ class FnBNet(nn.Module):
         x = x.flatten(1)
         x = self.fc(x)
 
-        return x, self.spread_div
+        return x, self.out_dict
 
 
 def Baseline(num_classes, base_model="r2plus1d_18", dropout=0.0):

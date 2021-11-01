@@ -58,7 +58,7 @@ def train_one_fold(data_dir, epochs, model_name, num_classes, base_model, lr, dr
     model = LitClassifier(model)
 
     if model_name == "FnBNet":
-        model.spread_regularization_coeff = args.coeff
+        model.regularization_coeff = args.coeff
 
     if args.dataset == "FDD":
         pos_weight = 2.0

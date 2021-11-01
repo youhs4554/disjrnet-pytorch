@@ -41,19 +41,20 @@ class LitClassifier(pl.LightningModule):
             inputs = inputs[0]  # single input case
         return inputs, y
 
-    def loss_function(self, logits, target, label_smoothing=None, spread_div=None):
+    def loss_function(self, logits, target, label_smoothing=None, out_dict=None):
 
         if label_smoothing is not None:
             target = target.float() * (1-label_smoothing) + 0.5 * label_smoothing
 
         loss = F.binary_cross_entropy_with_logits(
-            logits.view(-1), target.float(), pos_weight=torch.tensor(self.pos_weight))  # FDD : 2.0, URFD : 3.0
-        if spread_div is not None:
+            logits.view(-1), target.float(), pos_weight=torch.tensor(self.pos_weight))  # pos_weight = 2.0
+        if out_dict is not None:
             regularity = 0
-            for key in spread_div.keys():
-                # add spread divergence as regularization term
-                regularity += spread_div[key]
-            loss += regularity * self.spread_regularization_coeff
+            for key in out_dict.keys():
+                if key.startswith("L_discrepancy"):
+                    # accumulate regularization term
+                    regularity += out_dict[key]
+            loss += regularity * self.regularization_coeff
         return loss
 
     def training_step(self, batch, batch_idx):
@@ -61,8 +62,8 @@ class LitClassifier(pl.LightningModule):
 
         inputs, y = self.parse_batch(batch)
         if self.decomp_enabled:
-            logits, spread_div = self.forward(inputs)
-            loss_fn = partial(self.loss_function, spread_div=spread_div)
+            logits, out_dict = self.forward(inputs)
+            loss_fn = partial(self.loss_function, out_dict=out_dict)
         else:
             logits = self.forward(inputs)
             loss_fn = self.loss_function
@@ -86,8 +87,8 @@ class LitClassifier(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         inputs, y = self.parse_batch(batch)
         if self.decomp_enabled:
-            logits, spread_div = self.forward(inputs)
-            loss_fn = partial(self.loss_function, spread_div=spread_div)
+            logits, out_dict = self.forward(inputs)
+            loss_fn = partial(self.loss_function, out_dict=out_dict)
         else:
             logits = self.forward(inputs)
             loss_fn = self.loss_function
@@ -106,8 +107,8 @@ class LitClassifier(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         inputs, y = self.parse_batch(batch)
         if self.decomp_enabled:
-            logits, spread_div = self.forward(inputs)
-            loss_fn = partial(self.loss_function, spread_div=spread_div)
+            logits, out_dict = self.forward(inputs)
+            loss_fn = partial(self.loss_function, out_dict=out_dict)
         else:
             logits = self.forward(inputs)
             loss_fn = self.loss_function
