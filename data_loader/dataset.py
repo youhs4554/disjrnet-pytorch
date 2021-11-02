@@ -37,6 +37,7 @@ class VideoDataset:
 
     def subsample_validationset(self, validation_idx):
         self.train = False
+        self.transform = get_transforms(self.train)
         self.dataset = self.load_dataset(validation_idx)
 
     def load_dataset(self, validation_idx=None):
