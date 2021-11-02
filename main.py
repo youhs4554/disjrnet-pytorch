@@ -120,7 +120,7 @@ def run():
             save_dir=output_path, name=experiment_name, version=f'fold_{fold}')
         os.makedirs(output_path / experiment_name, exist_ok=True)
         checkpoint_callback = pl.callbacks.ModelCheckpoint(dirpath=tb_logger.log_dir, filename=f"epoch={{epoch:02d}}={{{args.monitor}:.4f}}",
-                                                           monitor=args.monitor, mode='max')
+                                                           monitor=args.monitor, mode='min' if 'loss' in args.monitor else 'max')
         cv_results.append(
             train_one_fold(data_dir, epochs=args.epochs, model_name=args.arch, num_classes=args.num_classes, base_model=args.base_model, lr=args.lr,
                            drop_rate=args.drop_rate, tb_logger=tb_logger, checkpoint_callback=checkpoint_callback, metrics_callbacks=metrics_callbacks, fold=fold)
@@ -128,7 +128,7 @@ def run():
 
     final_result = pd.DataFrame([cv_results[i][0]
                                 for i in range(args.n_fold)]).mean()
-                                
+
     print()
     print(f"*** Final results ({args.n_fold}-fold CV) ***\n", final_result)
 
