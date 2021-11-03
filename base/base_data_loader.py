@@ -79,4 +79,5 @@ class BaseDataLoader(DataLoader):
         else:
             # replace dataset with validation dataset
             self.init_kwargs["dataset"] = self.valid_ds
+            self.init_kwargs["collate_fn"] = default_collate
             return DataLoader(sampler=self.valid_sampler, **self.init_kwargs)
