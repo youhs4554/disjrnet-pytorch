@@ -126,6 +126,7 @@ class LitClassifier(pl.LightningModule):
         df_test = pd.DataFrame()
         df_test["clip_id"] = self.test_dataloader.dataloader.dataset.clip_list
         df_test["target"] = y.tolist()
+        df_test["probs"] = y_hat.view(-1).tolist()
         df_test["preds"] = y_hat.view(-1).ge(0.5).long().tolist()
         submission_dir = os.path.dirname(
             self.trainer.checkpoint_callback.best_model_path)
