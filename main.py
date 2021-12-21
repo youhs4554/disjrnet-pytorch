@@ -53,12 +53,13 @@ def train_one_fold(data_dir, epochs, model_name, num_classes, base_model, lr, dr
     # fix random seed for reproducibile results
     pl.seed_everything(seed=0)
 
-    model = getattr(model_zoo, model_name)(
-        num_classes, base_model, dropout=drop_rate)
-    model = LitClassifier(model)
-
+    model_init_fn = getattr(model_zoo, model_name)
     if model_name == "FnBNet":
-        model.regularization_coeff = args.coeff
+        model_init_fn = partial(
+            model_init_fn, margin=args.coeff, fusion_method=args.fusion_method)
+
+    model = model_init_fn(num_classes, base_model, dropout=drop_rate)
+    model = LitClassifier(model)
 
     if args.dataset == "FDD":
         pos_weight = 2.0
@@ -100,14 +101,16 @@ def run():
         [args.arch, args.base_model.replace("_", ""), f"{1}x{args.sample_length}x{1}"])
 
     if args.arch == 'FnBNet':
+        fusion_str = f"fusion={args.fusion_method}"
         coeff_str = f"c={args.coeff:.2e}"
+        experiment_name += "_" + fusion_str
         experiment_name += "_" + coeff_str
 
     metrics_callbacks = {
         "acc": torchmetrics.functional.accuracy,
         "sens": torchmetrics.functional.recall,
         "spec": torchmetrics.functional.specificity,
-        "f1": torchmetrics.functional.f1,
+        "f1": partial(torchmetrics.functional.f1, average='weighted', num_classes=2, multiclass=True),
         "auc": partial(torchmetrics.functional.auroc, pos_label=1)
     }
 
@@ -143,12 +146,13 @@ if __name__ == "__main__":
     parser.add_argument('--num_classes', type=int, default=2)
     parser.add_argument('--drop_rate', type=float, default=0.8)
     parser.add_argument('--base_model', type=str, default='r2plus1d_18')
+    parser.add_argument('--fusion_method', type=str, default='gating')
     parser.add_argument('--n_fold', type=int, default=5)
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--epochs', type=int, default=25)
     parser.add_argument('--sample_length', type=int, default=10)
     parser.add_argument('--num_workers', type=int, default=8)
-    parser.add_argument('--monitor', type=str, default='val_auc')
+    parser.add_argument('--monitor', type=str, default='val_f1')
     parser.add_argument('--use_lr_finder', default=False, action="store_true")
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--coeff', '--c',

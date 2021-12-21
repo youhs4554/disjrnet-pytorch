@@ -50,11 +50,14 @@ class LitClassifier(pl.LightningModule):
             logits.view(-1), target.float(), pos_weight=torch.tensor(self.pos_weight))  # pos_weight = 2.0
         if out_dict is not None:
             regularity = 0
+            stages = 0
             for key in out_dict.keys():
-                if key.startswith("L_discrepancy"):
+                if key.startswith("L_penalty"):
                     # accumulate regularization term
                     regularity += out_dict[key]
-            loss += regularity * self.regularization_coeff
+                    stages += 1
+            loss += (regularity / stages)
+
         return loss
 
     def training_step(self, batch, batch_idx):
@@ -62,8 +65,8 @@ class LitClassifier(pl.LightningModule):
 
         inputs, y = self.parse_batch(batch)
         if self.decomp_enabled:
-            logits, out_dict = self.forward(inputs)
-            loss_fn = partial(self.loss_function, out_dict=out_dict)
+            logits = self.forward(inputs)
+            loss_fn = partial(self.loss_function, out_dict=self.model.out_dict)
         else:
             logits = self.forward(inputs)
             loss_fn = self.loss_function
@@ -87,8 +90,8 @@ class LitClassifier(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         inputs, y = self.parse_batch(batch)
         if self.decomp_enabled:
-            logits, out_dict = self.forward(inputs)
-            loss_fn = partial(self.loss_function, out_dict=out_dict)
+            logits = self.forward(inputs)
+            loss_fn = partial(self.loss_function, out_dict=self.model.out_dict)
         else:
             logits = self.forward(inputs)
             loss_fn = self.loss_function
@@ -107,8 +110,8 @@ class LitClassifier(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         inputs, y = self.parse_batch(batch)
         if self.decomp_enabled:
-            logits, out_dict = self.forward(inputs)
-            loss_fn = partial(self.loss_function, out_dict=out_dict)
+            logits = self.forward(inputs)
+            loss_fn = partial(self.loss_function, out_dict=self.model.out_dict)
         else:
             logits = self.forward(inputs)
             loss_fn = self.loss_function

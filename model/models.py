@@ -1,3 +1,4 @@
+from turtle import forward
 import torch
 import torch.nn as nn
 import torchvision.models.video
@@ -38,9 +39,8 @@ class SE_Block(nn.Module):
         return out * x
 
 
-class FnBDec(nn.Module):
-    # FnBDec: Foreground-and-Background Decomposer
-    def __init__(self, num_features, fusion_method="gating"):
+class NonlinearDecomposer(nn.Module):
+    def __init__(self, num_features):
         super().__init__()
 
         # decomposer (use SE_Block to access global information)
@@ -49,6 +49,20 @@ class FnBDec(nn.Module):
             nn.Conv3d(num_features, num_features, kernel_size=1),
             nn.ReLU(True),
         )
+
+    def forward(self, x):
+        x_fg = self.decomposer(x)
+        x_bg = torch.abs(x - x_fg)
+
+        return x_fg, x_bg
+
+
+class FnBDec(nn.Module):
+    # FnBDec: Foreground-and-Background Decomposer
+    def __init__(self, num_features, fusion_method="gating"):
+        super().__init__()
+
+        self.decomposer = NonlinearDecomposer(num_features)
 
         if fusion_method == "gating":
             self.gate = Parameter(torch.Tensor(1, num_features, 1, 1, 1),
@@ -63,11 +77,11 @@ class FnBDec(nn.Module):
             )
 
         elif fusion_method == "gconv":
-            num_groups = 2
+            self.num_groups = 2
 
             self.gconv = nn.Sequential(
-                nn.Conv3d(num_groups * num_features, num_features,
-                          kernel_size=3, padding=1, groups=num_groups),
+                nn.Conv3d(self.num_groups * num_features, num_features,
+                          kernel_size=3, padding=1, groups=num_features),
                 nn.ReLU(True),
             )
 
@@ -86,9 +100,9 @@ class FnBDec(nn.Module):
             x_hat = self.gate * x_fg + (1-self.gate) * x_bg
             out = self.affine(x_hat)
         else:
-            def channel_shuffle(x, num_groups):
+            def channel_shuffle(x):
                 n, c, *dhw = x.shape
-                x = x.view(n, num_groups, c//num_groups,
+                x = x.view(n, self.num_groups, c//self.num_groups,
                            *dhw).transpose(1, 2)
                 x = x.reshape(n, -1, *dhw)
                 return x
@@ -96,56 +110,59 @@ class FnBDec(nn.Module):
             # concat the two component w.r.t channel axis
             x = torch.cat((x_fg, x_bg), dim=1)
             # channel shuffling
-            x_shuffled = channel_shuffle(x, num_groups=2)
+            x_shuffled = channel_shuffle(x)
             # grouped conv
             out = self.gconv(x_shuffled)
 
         return out
 
     def forward(self, x):
-        # hypothesis : x = x_fg + x_bg
-        x_fg = self.decomposer(x)
-        x_bg = torch.abs(x - x_fg)
-
+        x_fg, x_bg = self.decomposer(x)
         out = self.fusion(x_fg, x_bg)
 
-        return out + x
+        return out + x # residual connect
 
 
 class FnBNet(nn.Module):
-    def __init__(self, num_class,
+    def __init__(self, num_classes,
                  base_model="r2plus1d_18",
-                 dropout=0.8):
+                 dropout=0.8, margin=0.0, fusion_method="gating"):
 
         super().__init__()
 
-        self.num_class = num_class
+        self.num_classes = num_classes
+        self.margin = margin
 
         self._build_base_model(base_model)
 
         names = [name for name, _ in self.base_model.named_children()]
 
         self.s1 = getattr(self.base_model, names[0])
-        self.s1_fnb = FnBDec(num_features=self.layers[0])
+        self.s1_fnb = FnBDec(
+            num_features=self.layers[0], fusion_method=fusion_method)
 
         self.s2 = getattr(self.base_model, names[1])
-        self.s2_fnb = FnBDec(num_features=self.layers[1])
+        self.s2_fnb = FnBDec(
+            num_features=self.layers[1], fusion_method=fusion_method)
 
         self.s3 = getattr(self.base_model, names[2])
-        self.s3_fnb = FnBDec(num_features=self.layers[2])
+        self.s3_fnb = FnBDec(
+            num_features=self.layers[2], fusion_method=fusion_method)
 
         self.s4 = getattr(self.base_model, names[3])
-        self.s4_fnb = FnBDec(num_features=self.layers[3])
+        self.s4_fnb = FnBDec(
+            num_features=self.layers[3], fusion_method=fusion_method)
 
         self.s5 = getattr(self.base_model, names[4])
-        self.s5_fnb = FnBDec(num_features=self.layers[4])
+        self.s5_fnb = FnBDec(
+            num_features=self.layers[4], fusion_method=fusion_method)
 
         self.avg_pool = nn.AdaptiveAvgPool3d(1)
 
-        if num_class == 2:
+        if num_classes == 2:
             num_outputs = 1
         else:
-            num_outputs = num_class
+            num_outputs = num_classes
             raise NotImplementedError(
                 "Multi-class is not implemnted yet. comming soon!")
 
@@ -158,45 +175,54 @@ class FnBNet(nn.Module):
             self.fc = nn.Linear(self.layers[4], num_outputs)
 
         self.out_dict = collections.OrderedDict()
-        self.fhooks = []
 
         for l in self._modules.keys():
             child = getattr(self, l)
             if hasattr(child, "decomposer"):
                 # forward hook for decomposer
-                self.fhooks.append(
-                    getattr(child, "decomposer").register_forward_hook(self.fwd_hook(l)))
+                getattr(child, "decomposer").register_forward_hook(
+                    self.component_activation_hook(l))
+                # forward hook for child module
+                child.register_forward_hook(self.fusion_activation_hook(l))
 
-    #     self.fc.apply(self._init_fc)
+    def fusion_activation_hook(self, layer_name):
+        def intermediate_fusion_hook(module, input, output):
+            postfix = "_fnb"
+            self.out_dict["fusion_activation_{}".format(
+                layer_name[:-len(postfix)])] = output
+        return intermediate_fusion_hook
 
-    # def _init_fc(self, m):
-    #     if isinstance(m, nn.Linear):
-    #         nn.init.normal_(m.weight, std=0.01)
-    #         if isinstance(m, nn.Linear) and m.bias is not None:
-    #             nn.init.constant_(m.bias, 0)
-
-    def fwd_hook(self, layer_name):
-        def discrepancy_hook(module, input, output):
+    def component_activation_hook(self, layer_name):
+        def penalty_hook(module, input, output):
             x = input[0]
-            x_fg = output
-            x_bg = torch.abs(x - x_fg)
 
-            x_fg_mu, x_fg_sd = x_fg.flatten(1).mean(1), x_fg.flatten(1).std(1)
-            x_bg_mu, x_bg_sd = x_bg.flatten(1).mean(1), x_bg.flatten(1).std(1)
+            x_fg, x_bg = output
+
+            # channel descriptor vectors for each component
+            x_fg_vec = x_fg.mean(dim=(2, 3, 4))
+            x_bg_vec = x_bg.mean(dim=(2, 3, 4))
+
+            # channel statistics for each component
+            x_fg_mu, x_fg_sd = x_fg_vec.mean(1), x_fg_vec.std(1)
+            x_bg_mu, x_bg_sd = x_bg_vec.mean(1), x_bg_vec.std(1)
 
             fg_dist = torch.distributions.Normal(x_fg_mu, x_fg_sd)
             bg_dist = torch.distributions.Normal(x_bg_mu, x_bg_sd)
 
             kldiv = torch.distributions.kl_divergence(
-                fg_dist, bg_dist).mean().clamp(0, 1)
+                fg_dist, bg_dist).mean()
 
-            L_discrepancy = 1.0 - kldiv
+            L_penalty = torch.maximum(
+                self.margin - kldiv, torch.tensor(0.0).to(x.device))
 
             postfix = "_fnb"
-            self.out_dict["L_discrepancy_{}".format(layer_name[:-len(postfix)])] = L_discrepancy
+            self.out_dict["L_penalty_{}".format(
+                layer_name[:-len(postfix)])] = L_penalty
 
-            self.out_dict["fg_activation_{}".format(layer_name[:-len(postfix)])] = x_fg
-            self.out_dict["bg_activation_{}".format(layer_name[:-len(postfix)])] = x_bg
+            self.out_dict["fg_activation_{}".format(
+                layer_name[:-len(postfix)])] = x_fg
+            self.out_dict["bg_activation_{}".format(
+                layer_name[:-len(postfix)])] = x_bg
 
         def temporal_voltility_hook(module, input, output):
             x = input[0]
@@ -211,7 +237,7 @@ class FnBNet(nn.Module):
             # minimize bg's voltility
             self.out_dict[layer_name] = bg_voltility
 
-        return discrepancy_hook
+        return penalty_hook
 
     def _build_base_model(self, base_model):
         # TODO. test more base models (including 2D CNNs)
@@ -244,7 +270,7 @@ class FnBNet(nn.Module):
         x = x.flatten(1)
         x = self.fc(x)
 
-        return x, self.out_dict
+        return x
 
 
 def Baseline(num_classes, base_model="r2plus1d_18", dropout=0.0):
@@ -253,10 +279,10 @@ def Baseline(num_classes, base_model="r2plus1d_18", dropout=0.0):
             torchvision.models.video, base_model)(pretrained=True)
     elif base_model == "r2plus1d_34":
         model = torch.hub.load(
-                "moabitcoin/ig65m-pytorch",
-                "r2plus1d_34_8_ig65m",
-                num_classes=487,
-                pretrained=True,
+            "moabitcoin/ig65m-pytorch",
+            "r2plus1d_34_8_ig65m",
+            num_classes=487,
+            pretrained=True,
         )
 
     num_features = getattr(model.fc, "in_features")
@@ -270,11 +296,13 @@ def Baseline(num_classes, base_model="r2plus1d_18", dropout=0.0):
     return model
 
 
-def test_inference():
+def show_model(arch, **kwargs):
+    assert isinstance(arch, str)
+
     from torchsummary import summary
 
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    model = FnBNet(num_class=2)
+    model = eval(arch)(**kwargs)
     model.to(device)
     inputs = torch.randn(4, 3,  10, 112, 112).to(device)
     out = model(inputs)
@@ -286,3 +314,5 @@ def test_inference():
         device = "cuda"
 
     print(summary(model, input_shape[1:], device=device))
+
+    return True
