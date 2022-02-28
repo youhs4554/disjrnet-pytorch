@@ -1,1 +1,2 @@
-# FnBDecom: Weakly Supervised Foreground-and-Background Decomposition for Fall Detection
+# DisJR Networks: Disjointed Representation Learning for Better Fall Recognition
+![result_table](imgs/result.png)
