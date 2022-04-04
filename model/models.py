@@ -123,7 +123,7 @@ class FnBDec(nn.Module):
         return out + x # residual connect
 
 
-class FnBNet(nn.Module):
+class DisJRNet(nn.Module):
     def __init__(self, num_classes,
                  base_model="r2plus1d_18",
                  dropout=0.8, margin=0.0, fusion_method="gating"):

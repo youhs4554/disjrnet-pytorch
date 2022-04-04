@@ -54,7 +54,7 @@ def train_one_fold(data_dir, epochs, model_name, num_classes, base_model, lr, dr
     pl.seed_everything(seed=0)
 
     model_init_fn = getattr(model_zoo, model_name)
-    if model_name == "FnBNet":
+    if model_name == "DisJRNet":
         model_init_fn = partial(
             model_init_fn, margin=args.coeff, fusion_method=args.fusion_method)
 
@@ -100,7 +100,7 @@ def run():
     experiment_name = "_".join(
         [args.arch, args.base_model.replace("_", ""), f"{1}x{args.sample_length}x{1}"])
 
-    if args.arch == 'FnBNet':
+    if args.arch == 'DisJRNet':
         fusion_str = f"fusion={args.fusion_method}"
         coeff_str = f"c={args.coeff:.2e}"
         experiment_name += "_" + fusion_str
@@ -157,8 +157,8 @@ if __name__ == "__main__":
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--coeff', '--c',
                         type=float, default=0.0)
-    parser.add_argument('--arch', type=str, default='FnBNet',
-                        choices=["FnBNet", "Baseline"])
+    parser.add_argument('--arch', type=str, default='DisJRNet',
+                        choices=["DisJRNet", "Baseline"])
     parser.add_argument('--gpu_ids', type=str, default='none')
 
     global args

@@ -15,7 +15,7 @@ class LitClassifier(pl.LightningModule):
         # Important: This property activates manual optimization
         self.automatic_optimization = False
 
-        self.decomp_enabled = self.model.__class__.__name__ == "FnBNet"
+        self.decomp_enabled = self.model.__class__.__name__ == "DisJRNet"
 
     def log_performance(self, preds, target, phase):
         performances = {}
