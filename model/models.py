@@ -57,8 +57,8 @@ class NonlinearDecomposer(nn.Module):
         return x_fg, x_bg
 
 
-class FnBDec(nn.Module):
-    # FnBDec: Foreground-and-Background Decomposer
+class DisJR_Module(nn.Module):
+    # DisJR_Module: Module for Disjointing Representation 
     def __init__(self, num_features, fusion_method="gating"):
         super().__init__()
 
@@ -138,23 +138,23 @@ class DisJRNet(nn.Module):
         names = [name for name, _ in self.base_model.named_children()]
 
         self.s1 = getattr(self.base_model, names[0])
-        self.s1_fnb = FnBDec(
+        self.s1_disjr = DisJR_Module(
             num_features=self.layers[0], fusion_method=fusion_method)
 
         self.s2 = getattr(self.base_model, names[1])
-        self.s2_fnb = FnBDec(
+        self.s2_disjr = DisJR_Module(
             num_features=self.layers[1], fusion_method=fusion_method)
 
         self.s3 = getattr(self.base_model, names[2])
-        self.s3_fnb = FnBDec(
+        self.s3_disjr = DisJR_Module(
             num_features=self.layers[2], fusion_method=fusion_method)
 
         self.s4 = getattr(self.base_model, names[3])
-        self.s4_fnb = FnBDec(
+        self.s4_disjr = DisJR_Module(
             num_features=self.layers[3], fusion_method=fusion_method)
 
         self.s5 = getattr(self.base_model, names[4])
-        self.s5_fnb = FnBDec(
+        self.s5_disjr = DisJR_Module(
             num_features=self.layers[4], fusion_method=fusion_method)
 
         self.avg_pool = nn.AdaptiveAvgPool3d(1)
@@ -187,7 +187,7 @@ class DisJRNet(nn.Module):
 
     def fusion_activation_hook(self, layer_name):
         def intermediate_fusion_hook(module, input, output):
-            postfix = "_fnb"
+            postfix = "_disjr"
             self.out_dict["fusion_activation_{}".format(
                 layer_name[:-len(postfix)])] = output
         return intermediate_fusion_hook
@@ -215,7 +215,7 @@ class DisJRNet(nn.Module):
             L_penalty = torch.maximum(
                 self.margin - kldiv, torch.tensor(0.0).to(x.device))
 
-            postfix = "_fnb"
+            postfix = "_disjr"
             self.out_dict["L_penalty_{}".format(
                 layer_name[:-len(postfix)])] = L_penalty
 
@@ -257,15 +257,15 @@ class DisJRNet(nn.Module):
 
     def forward(self, x):
         x = self.s1(x)
-        x = self.s1_fnb(x)
+        x = self.s1_disjr(x)
         x = self.s2(x)
-        x = self.s2_fnb(x)
+        x = self.s2_disjr(x)
         x = self.s3(x)
-        x = self.s3_fnb(x)
+        x = self.s3_disjr(x)
         x = self.s4(x)
-        x = self.s4_fnb(x)
+        x = self.s4_disjr(x)
         x = self.s5(x)
-        x = self.s5_fnb(x)
+        x = self.s5_disjr(x)
         x = self.avg_pool(x)
         x = x.flatten(1)
         x = self.fc(x)
