@@ -36,3 +36,21 @@ class BPMLLLoss(torch.nn.Module):
         truth_matrix = y.unsqueeze(2).float() @ y_bar.unsqueeze(1).float()
         exp_matrix = torch.exp(c.unsqueeze(1) - c.unsqueeze(2))
         return (torch.mul(truth_matrix, exp_matrix)).sum(dim=(1, 2))
+
+def compute_loss(model, criterion, logits, target):
+    """
+        CE + regularization(w.r.t. dissimiarity)
+    """
+    
+    loss = criterion(logits, target.view(-1).long())
+
+    regularity = 0
+    stages = 0
+    for key in model.out_dict.keys():
+        if key.startswith("L_penalty"):
+            # accumulate regularization term
+            regularity += model.out_dict[key]
+            stages += 1
+    loss += (regularity / stages)
+
+    return loss

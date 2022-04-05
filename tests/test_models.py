@@ -2,27 +2,10 @@ import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 from disjrnet.model.models import DisJRNet
+from disjrnet.model.loss import compute_loss
 
 alpha           =   2.0       # hyperparameter
 fusion_method   =   'gating'   # candidates = 'gating' | 'gconv'
-
-def compute_loss(model, criterion, logits, target):
-    """
-        CE + dissimiarity regularization
-    """
-    
-    loss = criterion(logits, target.view(-1).long())
-
-    regularity = 0
-    stages = 0
-    for key in model.out_dict.keys():
-        if key.startswith("L_penalty"):
-            # accumulate regularization term
-            regularity += model.out_dict[key]
-            stages += 1
-    loss += (regularity / stages)
-
-    return loss
 
 def infer(model, dimension):
 

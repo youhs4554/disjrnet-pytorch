@@ -19,26 +19,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 from disjrnet.model.models import DisJRNet
-
-def compute_loss(model, logits, target):
-    """
-        CE + regularization(w.r.t. dissimiarity)
-    """
-
-    criterion = nn.CrossEntropyLoss()
-
-    loss = criterion(logits, target.view(-1).long())
-
-    regularity = 0
-    stages = 0
-    for key in model.out_dict.keys():
-        if key.startswith("L_penalty"):
-            # accumulate regularization term
-            regularity += model.out_dict[key]
-            stages += 1
-    loss += (regularity / stages)
-
-    return loss
+from disjrnet.model.loss import compute_loss
 
 alpha           =   2.0       # hyperparameter
 fusion_method   =   'gating'   # candidates = 'gating' | 'gconv'
@@ -59,6 +40,9 @@ model = DisJRNet(num_classes    =   10,
 #                 margin          =   alpha,
 #                 fusion_method   =   fusion_method)
 
+# classification loss = CE
+criterion = nn.CrossEntropyLoss()
+
 # dummy data example
 inps = torch.randn(10, 3, 112, 112)
 tgts = torch.arange(10, dtype=torch.float32).view(10,-1)
@@ -71,7 +55,7 @@ inputs, target = next(loader_iter)
 
 logits = model(inputs)
 
-loss = compute_loss(model, logits, target)
+loss = compute_loss(model, criterion, logits, target)
 pred = logits.argmax(1)
 
 print(f"loss : {loss:.4f}, pred : {pred}, target : {target.view(-1)}")
