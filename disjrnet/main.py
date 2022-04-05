@@ -8,6 +8,7 @@ from data_loader.data_loaders import VideoDataLoader
 import pytorch_lightning as pl
 from functools import partial
 from pytorch_lightning.loggers.tensorboard import TensorBoardLogger
+from utils.data import prepare_dataset
 
 import model.models as model_zoo
 from model.lightning_module import LitClassifier
@@ -15,40 +16,8 @@ from model.lightning_module import LitClassifier
 import warnings
 warnings.filterwarnings("ignore")
 
-
-def prepare_dataset(data_dir, fold=1, validation=True):
-    """prepare dataloaders (train/val/test) for given fold
-
-    Args:
-        data_dir (str): dataset directory path.
-        fold (int, optional): fold index in [1, args.n_fold]. Defaults to 1.
-        validation (bool, optional): if True, return validation dataloader. Defaults to True.
-
-    Returns:
-        dataloaders (tuple): tuple of pytorch dataloaders
-    """
-
-    # init dataset
-    train_loader = VideoDataLoader(
-        data_dir, batch_size=args.batch_size, fold=fold,
-        sample_length=args.sample_length,
-        validation_split=0.05, num_workers=args.num_workers)
-    valid_loader = train_loader.split_validation()
-
-    test_loader = VideoDataLoader(
-        data_dir, batch_size=args.batch_size, fold=fold, training=False, validation_split=0.0,
-        sample_length=args.sample_length,
-        num_workers=args.num_workers
-    )
-
-    if validation:
-        return train_loader, valid_loader, test_loader
-    else:
-        return train_loader, test_loader
-
-
 def train_one_fold(data_dir, epochs, model_name, num_classes, base_model, lr, drop_rate,
-                   tb_logger, checkpoint_callback, metrics_callbacks, fold=1):
+                   tb_logger, checkpoint_callback, class_weight=None, metrics_callbacks=None, fold=1):
 
     # fix random seed for reproducibile results
     pl.seed_everything(seed=0)
@@ -59,25 +28,13 @@ def train_one_fold(data_dir, epochs, model_name, num_classes, base_model, lr, dr
             model_init_fn, margin=args.coeff, fusion_method=args.fusion_method)
 
     model = model_init_fn(num_classes, base_model, dropout=drop_rate)
-    model = LitClassifier(model)
-
-    if args.dataset == "FDD":
-        pos_weight = 2.0
-    elif args.dataset == "URFD":
-        pos_weight = 2.0
-    else:
-        pos_weight = 1.0
-
-    model.learning_rate = lr
-    model.pos_weight = pos_weight
-    model.metrics_callbacks = metrics_callbacks
+    model = LitClassifier(model, learning_rate=lr, class_weight=class_weight, metrics_callbacks=metrics_callbacks)
 
     train_loader, valid_loader, test_loader = prepare_dataset(
-        data_dir, fold=fold, validation=True,
+        data_dir, args.batch_size, args.sample_length, args.num_workers,  fold=fold, validation=True,
     )
     trainer = pl.Trainer(
-        gpus=None if not torch.cuda.is_available(
-        ) else [int(i) for i in args.gpu_ids.split(',')],
+        accelerator="gpu", devices=1,
         logger=tb_logger, callbacks=[
             checkpoint_callback],
         max_epochs=epochs, auto_lr_find=args.use_lr_finder, check_val_every_n_epoch=1,
@@ -106,12 +63,19 @@ def run():
         experiment_name += "_" + fusion_str
         experiment_name += "_" + coeff_str
 
+    if args.dataset == "FDD":
+        class_weight = [1.0, 2.0]
+    elif args.dataset == "URFD":
+        class_weight = [1.0, 2.0, 3.0, 4.0, 5.0]
+    else:
+        class_weight = [1.0, 1.0]
+
     metrics_callbacks = {
         "acc": torchmetrics.functional.accuracy,
-        "sens": torchmetrics.functional.recall,
-        "spec": torchmetrics.functional.specificity,
-        "f1": partial(torchmetrics.functional.f1, average='weighted', num_classes=2, multiclass=True),
-        "auc": partial(torchmetrics.functional.auroc, pos_label=1)
+        # "sens": torchmetrics.functional.recall,
+        # "spec": torchmetrics.functional.specificity,
+        "f1": partial(torchmetrics.functional.f1, average='weighted', num_classes=args.num_classes, multiclass=True),
+        # "auc": partial(torchmetrics.functional.auroc, pos_label=1)
     }
 
     cv_results = []
@@ -126,7 +90,7 @@ def run():
                                                            monitor=args.monitor, mode='min' if 'loss' in args.monitor else 'max')
         cv_results.append(
             train_one_fold(data_dir, epochs=args.epochs, model_name=args.arch, num_classes=args.num_classes, base_model=args.base_model, lr=args.lr,
-                           drop_rate=args.drop_rate, tb_logger=tb_logger, checkpoint_callback=checkpoint_callback, metrics_callbacks=metrics_callbacks, fold=fold)
+                           drop_rate=args.drop_rate, tb_logger=tb_logger, checkpoint_callback=checkpoint_callback, class_weight=class_weight, metrics_callbacks=metrics_callbacks, fold=fold)
         )
 
     final_result = pd.DataFrame([cv_results[i][0]
@@ -159,18 +123,7 @@ if __name__ == "__main__":
                         type=float, default=0.0)
     parser.add_argument('--arch', type=str, default='DisJRNet',
                         choices=["DisJRNet", "Baseline"])
-    parser.add_argument('--gpu_ids', type=str, default='none')
 
     global args
     args = parser.parse_args()
-
-    if args.gpu_ids != 'none':
-        assert all(map(lambda item: item.isdigit(),
-                   args.gpu_ids.split(','))), "unrecognizable gpu ids"
-        if not torch.cuda.is_available():
-            warnings.warn(
-                f"GPU computation is ignored, since your machine is CPU-only system", ResourceWarning)
-
-        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-        os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_ids
     run()

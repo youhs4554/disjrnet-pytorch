@@ -1,16 +1,19 @@
 from functools import partial
 import os
 import torch
-import torch.nn.functional as F
+import torch.nn as nn
 import torchmetrics
 import pytorch_lightning as pl
 import pandas as pd
 
 
 class LitClassifier(pl.LightningModule):
-    def __init__(self, model):
+    def __init__(self, model, learning_rate, class_weight=None, metrics_callbacks=None):
         super().__init__()
         self.model = model
+        self.learning_rate = learning_rate
+        self.class_weight = class_weight
+        self.metrics_callbacks = metrics_callbacks
 
         # Important: This property activates manual optimization
         self.automatic_optimization = False
@@ -45,9 +48,21 @@ class LitClassifier(pl.LightningModule):
 
         if label_smoothing is not None:
             target = target.float() * (1-label_smoothing) + 0.5 * label_smoothing
+            
+        cls_weight = getattr(self, 'class_weight', None)
+        if cls_weight is not None:
+            cls_weight = torch.tensor(cls_weight).to(logits.device)
 
-        loss = F.binary_cross_entropy_with_logits(
-            logits.view(-1), target.float(), pos_weight=torch.tensor(self.pos_weight))  # pos_weight = 2.0
+        if self.model.num_classes == 2:
+            pos_weight = cls_weight[1] # pos_weight = 2.0
+            criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+            logits = logits.view(-1)
+            target = target.float()
+            pred = logits.sigmoid()
+        else:
+            criterion = nn.CrossEntropyLoss(weight=cls_weight)
+            pred = logits.argmax(1)
+        loss = criterion(logits, target)
         if out_dict is not None:
             regularity = 0
             stages = 0
@@ -58,7 +73,7 @@ class LitClassifier(pl.LightningModule):
                     stages += 1
             loss += (regularity / stages)
 
-        return loss
+        return loss, pred
 
     def training_step(self, batch, batch_idx):
         opt = self.optimizers()
@@ -71,7 +86,7 @@ class LitClassifier(pl.LightningModule):
             logits = self.forward(inputs)
             loss_fn = self.loss_function
 
-        loss = loss_fn(logits, y)
+        loss, pred = loss_fn(logits, y)
 
         self.manual_backward(loss)
         opt.step()
@@ -83,7 +98,7 @@ class LitClassifier(pl.LightningModule):
             for p in params_at_gate:
                 p.data.clamp_(min=0, max=1)
         self.log("train_loss", loss)
-        self.log_performance(logits.sigmoid(), y, "train")
+        self.log_performance(pred, y, "train")
 
         return loss
 
@@ -96,10 +111,10 @@ class LitClassifier(pl.LightningModule):
             logits = self.forward(inputs)
             loss_fn = self.loss_function
 
-        loss = loss_fn(logits, y)
+        loss, pred = loss_fn(logits, y)
         self.log("val_loss", loss)
 
-        return {'val_loss': loss, 'y': y, "y_hat": logits.sigmoid()}
+        return {'val_loss': loss, 'y': y, "y_hat": pred}
 
     def validation_epoch_end(self, outputs):
         y = torch.cat([x["y"] for x in outputs])
@@ -116,10 +131,10 @@ class LitClassifier(pl.LightningModule):
             logits = self.forward(inputs)
             loss_fn = self.loss_function
 
-        loss = loss_fn(logits, y)
+        loss, pred = loss_fn(logits, y)
 
         self.log("test_loss", loss)
-        return {'y': y, "y_hat": logits.sigmoid()}
+        return {'y': y, "y_hat": pred}
 
     def test_epoch_end(self, outputs):
         y = torch.cat([x["y"] for x in outputs])

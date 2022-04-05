@@ -1,19 +1,18 @@
-from turtle import forward
 import torch
 import torch.nn as nn
 import torchvision.models.video
 from torch.nn.parameter import Parameter
 import collections
-
+from torchvision.models.feature_extraction import create_feature_extractor
 
 class SE_Block(nn.Module):
     """
         Squeeze-and-Excitation block
     """
 
-    def __init__(self, num_features, reduction_ratio=16):
+    def __init__(self, num_features, reduction_ratio=16, dimension=2):
         super().__init__()
-        self.squeeze = nn.AdaptiveAvgPool3d((1, 1, 1))
+        self.squeeze = getattr(nn, "AdaptiveAvgPool" + str(dimension) + "d")(1)
         self.excitation = nn.Sequential(
             nn.Linear(num_features, num_features //
                       reduction_ratio, bias=False),
@@ -33,20 +32,22 @@ class SE_Block(nn.Module):
         out = self.squeeze(x)
         out = out.view(out.size(0), -1)
         out = self.excitation(out)
-        out = out.view(out.size(0), out.size(1), 1, 1, 1)
+        out = out.view(out.size(0), out.size(1), *[1]*(x.dim()-2))
 
         # scale (re-calibration)
         return out * x
 
 
 class NonlinearDecomposer(nn.Module):
-    def __init__(self, num_features):
+    def __init__(self, num_features, dimension=2):
         super().__init__()
+        
+        conv_builder = getattr(nn, "Conv"+str(dimension)+"d")
 
         # decomposer (use SE_Block to access global information)
         self.decomposer = nn.Sequential(
-            SE_Block(num_features, reduction_ratio=16),
-            nn.Conv3d(num_features, num_features, kernel_size=1),
+            SE_Block(num_features, reduction_ratio=16, dimension=dimension),
+            conv_builder(num_features, num_features, kernel_size=1),
             nn.ReLU(True),
         )
 
@@ -59,20 +60,22 @@ class NonlinearDecomposer(nn.Module):
 
 class DisJR_Module(nn.Module):
     # DisJR_Module: Module for Disjointing Representation 
-    def __init__(self, num_features, fusion_method="gating"):
+    def __init__(self, num_features, fusion_method="gating", dimension=2):
         super().__init__()
+        
+        conv_builder = getattr(nn, "Conv"+str(dimension)+"d")
 
-        self.decomposer = NonlinearDecomposer(num_features)
+        self.decomposer = NonlinearDecomposer(num_features, dimension=dimension)
 
         if fusion_method == "gating":
-            self.gate = Parameter(torch.Tensor(1, num_features, 1, 1, 1),
+            self.gate = Parameter(torch.Tensor(1, num_features, *[1]*dimension),
                                   requires_grad=True)  # learnable gate
             self.gate.data.fill_(0.5)
             setattr(self.gate, 'is_gate', True)
 
             # affine layer after gating
             self.affine = nn.Sequential(
-                nn.Conv3d(num_features, num_features, kernel_size=1),
+                conv_builder(num_features, num_features, kernel_size=1),
                 nn.ReLU(True),
             )
 
@@ -80,7 +83,7 @@ class DisJR_Module(nn.Module):
             self.num_groups = 2
 
             self.gconv = nn.Sequential(
-                nn.Conv3d(self.num_groups * num_features, num_features,
+                conv_builder(self.num_groups * num_features, num_features,
                           kernel_size=3, padding=1, groups=num_features),
                 nn.ReLU(True),
             )
@@ -88,11 +91,9 @@ class DisJR_Module(nn.Module):
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
-        if isinstance(m, nn.Conv3d):
+        if "Conv" in m.__class__.__name__:
             nn.init.kaiming_normal_(
                 m.weight, mode="fan_out", nonlinearity="relu")
-            # if isinstance(m, nn.Conv3d) and m.bias is not None:
-            #     nn.init.constant_(m.bias, 0)
 
     def fusion(self, x_fg, x_bg):
         if hasattr(self, "gate"):
@@ -101,10 +102,10 @@ class DisJR_Module(nn.Module):
             out = self.affine(x_hat)
         else:
             def channel_shuffle(x):
-                n, c, *dhw = x.shape
+                n, c, *sizes = x.shape
                 x = x.view(n, self.num_groups, c//self.num_groups,
-                           *dhw).transpose(1, 2)
-                x = x.reshape(n, -1, *dhw)
+                           *sizes).transpose(1, 2)
+                x = x.reshape(n, -1, *sizes)
                 return x
 
             # concat the two component w.r.t channel axis
@@ -125,46 +126,44 @@ class DisJR_Module(nn.Module):
 
 class DisJRNet(nn.Module):
     def __init__(self, num_classes,
-                 base_model="r2plus1d_18",
+                 base_model="r2plus1d_18", dimension=2,
                  dropout=0.8, margin=0.0, fusion_method="gating"):
 
         super().__init__()
 
         self.num_classes = num_classes
+        self.dimension = dimension
         self.margin = margin
 
-        self._build_base_model(base_model)
+        self._build_base_model(base_model, dimension)
 
-        names = [name for name, _ in self.base_model.named_children()]
+        names = self.names
 
-        self.s1 = getattr(self.base_model, names[0])
         self.s1_disjr = DisJR_Module(
-            num_features=self.layers[0], fusion_method=fusion_method)
+            num_features=self.layers[0], fusion_method=fusion_method, dimension=dimension)
 
         self.s2 = getattr(self.base_model, names[1])
         self.s2_disjr = DisJR_Module(
-            num_features=self.layers[1], fusion_method=fusion_method)
+            num_features=self.layers[1], fusion_method=fusion_method, dimension=dimension)
 
         self.s3 = getattr(self.base_model, names[2])
         self.s3_disjr = DisJR_Module(
-            num_features=self.layers[2], fusion_method=fusion_method)
+            num_features=self.layers[2], fusion_method=fusion_method, dimension=dimension)
 
         self.s4 = getattr(self.base_model, names[3])
         self.s4_disjr = DisJR_Module(
-            num_features=self.layers[3], fusion_method=fusion_method)
+            num_features=self.layers[3], fusion_method=fusion_method, dimension=dimension)
 
         self.s5 = getattr(self.base_model, names[4])
         self.s5_disjr = DisJR_Module(
-            num_features=self.layers[4], fusion_method=fusion_method)
+            num_features=self.layers[4], fusion_method=fusion_method, dimension=dimension)
 
-        self.avg_pool = nn.AdaptiveAvgPool3d(1)
+        self.avg_pool = getattr(nn, "AdaptiveAvgPool" + str(dimension) + "d")(1)
 
         if num_classes == 2:
             num_outputs = 1
         else:
             num_outputs = num_classes
-            raise NotImplementedError(
-                "Multi-class is not implemnted yet. comming soon!")
 
         if dropout > 0:
             self.fc = nn.Sequential(
@@ -199,8 +198,8 @@ class DisJRNet(nn.Module):
             x_fg, x_bg = output
 
             # channel descriptor vectors for each component
-            x_fg_vec = x_fg.mean(dim=(2, 3, 4))
-            x_bg_vec = x_bg.mean(dim=(2, 3, 4))
+            x_fg_vec = x_fg.flatten(2).mean(2)
+            x_bg_vec = x_bg.flatten(2).mean(2)
 
             # channel statistics for each component
             x_fg_mu, x_fg_sd = x_fg_vec.mean(1), x_fg_vec.std(1)
@@ -239,25 +238,46 @@ class DisJRNet(nn.Module):
 
         return penalty_hook
 
-    def _build_base_model(self, base_model):
-        # TODO. test more base models (including 2D CNNs)
-        # which are listed in https://github.com/facebookresearch/pytorchvideo/blob/main/docs/source/model_zoo.md
-        if base_model == "r2plus1d_18" or base_model == "r3d_18":
+    def _build_base_model(self, base_model, dimension):
+        if dimension == 3:
+            if base_model == "r2plus1d_18" or base_model == "r3d_18":
+                self.base_model = getattr(
+                    torchvision.models.video, base_model)(pretrained=True)
+            elif base_model == "r2plus1d_34":
+                self.base_model = torch.hub.load(
+                    "moabitcoin/ig65m-pytorch",
+                    "r2plus1d_34_8_ig65m",
+                    num_classes=487,
+                    pretrained=True,
+                )
+            dummy_ = torch.randn(1,3,10,224,224)
+            stem_node = {'stem': 's1'}
+            return_nodes = {'stem': 's1',
+                            'layer1' : 's2',
+                            'layer2' : 's3',
+                            'layer3' : 's4',
+                            'layer4' : 's5'}
+        elif dimension == 2:
+            assert base_model.startswith('resnet'), f"Do not support model name of '{base_model}'. ResNet-based model is only supported."
             self.base_model = getattr(
-                torchvision.models.video, base_model)(pretrained=True)
-            self.layers = [64, 64, 128, 256, 512]
-        elif base_model == "r2plus1d_34":
-            self.base_model = torch.hub.load(
-                "moabitcoin/ig65m-pytorch",
-                "r2plus1d_34_8_ig65m",
-                num_classes=487,
-                pretrained=True,
-            )
-            self.layers = [64, 64, 128, 256, 512]
+                torchvision.models, base_model)(pretrained=True)
+            dummy_ = torch.randn(1,3,224,224)
+            return_nodes = {'maxpool': 's1',
+                            'layer1' : 's2',
+                            'layer2' : 's3',
+                            'layer3' : 's4',
+                            'layer4' : 's5'}
+            stem_node = {'maxpool': 's1'}
+            
+        self.stem_extractor = create_feature_extractor(self.base_model, stem_node)
+        feats = create_feature_extractor(self.base_model, return_nodes)(dummy_)
+        self.layers = [ t.size(1) for t in feats.values() ]
+        self.names = list(return_nodes.keys())
 
     def forward(self, x):
-        x = self.s1(x)
-        x = self.s1_disjr(x)
+        
+        feats = self.stem_extractor(x)
+        x = self.s1_disjr(feats['s1'])
         x = self.s2(x)
         x = self.s2_disjr(x)
         x = self.s3(x)
