@@ -13,7 +13,7 @@ setup(
     author_email        = 'youhs4554@gmail.com',
     url                 = 'https://github.com/youhs4554/disjrnet-pytorch.git', # github url
     download_url        = 'https://github.com/youhs4554/disjrnet-pytorch/archive/refs/tags/v0.1.tar.gz', # release url
-    install_requires    =  ["torch"], # required packages
+    install_requires    =  ["torch", "torchvision"], # required packages
     packages            = find_packages(exclude = []),
     keywords            = ['representation learning', 'weakly supervised learning', 'fall detection'], # 키워드
     python_requires     = '>=3.6', # python 필요 버전
