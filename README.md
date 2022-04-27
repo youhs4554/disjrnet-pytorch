@@ -10,9 +10,9 @@ In this way, the model grasps more general representations about the video scene
 
 ![model_overview](imgs/model.png)
 
-## Examples
+## Example
 
-Here is code example for using DisJRNet:
+Here is code example for using pip-downloaded DisJRNet:
 
 ```
 import torch
@@ -60,3 +60,35 @@ pred = logits.argmax(1)
 
 print(f"loss : {loss:.4f}, pred : {pred}, target : {target.view(-1)}")
 ```
+
+## Training scripts
+
+Here are script examples for training available model in this project:
+
+- DisJRNet
+
+```bash
+# FDD
+python main.py --dataset FDD --root <dataset_root> --output_path <checkpoint_dir> --num_classes 2 --drop_rate 0.8 --base_model r2plus1d_18 --fusion_method gating --n_fold 5 --batch_size 8 --epochs 25 --sample_length 10 --num_workers 8 --monitor val_f1 --lr 1e-4 --c 5.0 --arch DisJRNet
+
+# URFD
+python main.py --dataset URFD --root <dataset_root> --output_path <checkpoint_dir> --num_classes 2 --drop_rate 0.8 --base_model r2plus1d_18 --fusion_method gating --n_fold 5 --batch_size 8 --epochs 25 --sample_length 10 --num_workers 8 --monitor val_f1 --lr 1e-4 --c 2.0 --arch DisJRNet
+```
+
+- Baseline
+
+```bash
+# FDD
+python main.py --dataset FDD --root <dataset_root> --output_path <checkpoint_dir> --num_classes 2 --drop_rate 0.8 --base_model r2plus1d_18 --n_fold 5 --batch_size 8 --epochs 25 --sample_length 10 --num_workers 8 --monitor val_f1 --lr 1e-4 --arch Baseline
+
+# URFD
+python main.py --dataset URFD --root <dataset_root> --output_path <checkpoint_dir> --num_classes 2 --drop_rate 0.8 --base_model r2plus1d_18 --n_fold 5 --batch_size 8 --epochs 25 --sample_length 10 --num_workers 8 --monitor val_f1 --lr 1e-4 --arch Baseline
+```
+
+## Results
+
+![result_table](imgs/result.png)
+
+## Activation Map Visualization
+
+![activation](imgs/activations.png)

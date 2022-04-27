@@ -27,7 +27,7 @@ def train_one_fold(data_dir, epochs, model_name, num_classes, base_model, lr, dr
         model_init_fn = partial(
             model_init_fn, margin=args.coeff, fusion_method=args.fusion_method)
 
-    model = model_init_fn(num_classes, base_model, dropout=drop_rate)
+    model = model_init_fn(num_classes, base_model, dimension=args.dimension, dropout=drop_rate)
     model = LitClassifier(model, learning_rate=lr, class_weight=class_weight, metrics_callbacks=metrics_callbacks)
 
     train_loader, valid_loader, test_loader = prepare_dataset(
@@ -72,10 +72,10 @@ def run():
 
     metrics_callbacks = {
         "acc": torchmetrics.functional.accuracy,
-        # "sens": torchmetrics.functional.recall,
-        # "spec": torchmetrics.functional.specificity,
+        "sens": torchmetrics.functional.recall,
+        "spec": torchmetrics.functional.specificity,
         "f1": partial(torchmetrics.functional.f1, average='weighted', num_classes=args.num_classes, multiclass=True),
-        # "auc": partial(torchmetrics.functional.auroc, pos_label=1)
+        "auc": partial(torchmetrics.functional.auroc, pos_label=1)
     }
 
     cv_results = []
@@ -123,6 +123,7 @@ if __name__ == "__main__":
                         type=float, default=0.0)
     parser.add_argument('--arch', type=str, default='DisJRNet',
                         choices=["DisJRNet", "Baseline"])
+    parser.add_argument('--dimension', type=int, default=3)
 
     global args
     args = parser.parse_args()
