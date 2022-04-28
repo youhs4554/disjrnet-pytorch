@@ -5,7 +5,7 @@ with open('README.md', encoding='utf-8') as f: # README.md 내용 읽어오기
 
 setup(
     name                = 'disjrnet_pytorch',
-    version             = '0.1.1',
+    version             = '0.1.2',
     long_description    = long_description,          # readme
     long_description_content_type = 'text/markdown', # markdown
     description         = 'A small example package',
