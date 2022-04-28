@@ -63,6 +63,12 @@ print(f"loss : {loss:.4f}, pred : {pred}, target : {target.view(-1)}")
 
 ## Training scripts
 
+First, you need to change directory to disjrnet
+
+```
+cd disjrnet
+```
+
 Here are script examples for training available model in this project:
 
 - DisJRNet
